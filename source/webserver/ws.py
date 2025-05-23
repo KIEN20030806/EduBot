@@ -1,5 +1,5 @@
 from flask import Flask, request, Response, jsonify
-import whisper
+from transformers import pipeline
 import google.generativeai as genai
 from gtts import gTTS
 from pydub import AudioSegment
@@ -9,8 +9,7 @@ import os
 app = Flask(__name__)
 
 # Tải mô hình Whisper một lần khi ứng dụng khởi động
-whisper_model = whisper.load_model("base")
-
+whisper_model = pipeline("automatic-speech-recognition", model="vinai/PhoWhisper-tiny")  
 # Cấu hình Google Generative AI
 genai.configure(api_key="AIzaSyCxA64e2X5EJn-d3i9GqOZo0iqancL53Ws")
 model = genai.GenerativeModel("gemini-2.0-flash")
@@ -51,13 +50,15 @@ def end_audio():
         with wave.open("stream_audio.wav", "wb") as wav_file:
             wav_file.setnchannels(1)    # 1 kênh (mono)
             wav_file.setsampwidth(2)    # 2 bytes per sample (16-bit)
-            wav_file.setframerate(8000) # Tần số lấy mẫu 8kHz
+            wav_file.setframerate(16000) # Tần số lấy mẫu 8kHz
             wav_file.writeframes(audio_buffer)
         print("Đã lưu file âm thanh hoàn chỉnh: stream_audio.wav")
 
         # Nhận diện giọng nói từ file audio đã lưu
         print("Đang nhận diện giọng nói...")
-        text = whisper_model.transcribe("stream_audio.wav", language="vi")["text"]
+        result = whisper_model("stream_audio.wav")
+        text = result["text"]
+
         print("Nội dung nhận diện:", text)
 
         # Thêm nội dung nhận diện của người dùng vào lịch sử trò chuyện
@@ -80,19 +81,11 @@ def end_audio():
 
         # Xử lý file âm thanh để phù hợp với yêu cầu client (resampling, channels, sample width)
         audio = AudioSegment.from_mp3("response_audio.mp3")
-        
-        # Tăng tốc độ nói nhẹ nhàng (ví dụ: 1.1x)
-        # Thay vì thay đổi framerate một cách thô bạo có thể gây méo tiếng,
-        # hãy sử dụng speed factor của pydub nếu có thể hoặc điều chỉnh thông số đầu vào gTTS.
-        # Ở đây, việc thay đổi frame_rate sau khi đã tạo audio có thể không hiệu quả
-        # như mong đợi hoặc gây ra âm thanh không tự nhiên.
-        # Nếu muốn thay đổi tốc độ, nên làm ở bước gTTS hoặc dùng thư viện xử lý âm thanh khác chuyên nghiệp hơn.
-        # Tạm thời bỏ qua việc thay đổi framerate để tránh lỗi hoặc chất lượng âm thanh kém
-        # audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * 1.1)})
-
-        audio = audio.set_frame_rate(8000)  # Đặt lại tần số lấy mẫu mong muốn
-        audio = audio.set_channels(1)       # Đặt lại 1 kênh (mono)
-        audio = audio.set_sample_width(2)   # Đặt lại 2 bytes per sample (16-bit)
+        new_frame_rate = int(audio.frame_rate * 1.3)
+        audio = audio._spawn(audio.raw_data, overrides={'frame_rate': new_frame_rate})
+        audio = audio.set_frame_rate(8000)
+        audio = audio.set_channels(1)
+        audio = audio.set_sample_width(2)
         audio.export("response_audio.wav", format="wav")
         print("Đã chuyển đổi và lưu file WAV phản hồi: response_audio.wav")
 
@@ -147,7 +140,7 @@ def get_ready():
 def reset_session():
     global session_history
     session_history = [
-        {"role": "system", "content": "Bạn, tên là Kiddy, đang trò chuyện với một đứa bé trong vai trò 1 người bạn, trả lời đúng trọng tâm, thân thiện, không chứa các ký tự, đừng lặp lại câu trả lời, đừng chào lại nhiều lần. Hãy trả lời ngắn gọn và dễ hiểu."}
+        {"role": "system", "content": "Bạn, tên là Kiddy, đang trò chuyện với một đứa bé trong vai trò 1 người bạn, trả lời đúng trọng tâm, thân thiện, không chứa các ký tự, đừng lặp lại câu trả lời, đừng chào lại nhiều lần. Hãy trả lời dễ hiểu, dưới 60 từ"}
     ]
     print("Đã reset lịch sử trò chuyện.")
     return Response("Session history reset", status=200)

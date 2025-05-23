@@ -10,7 +10,7 @@ class ESP32MicStreamer:
         self.SSID_AP = "ESP32_Config"
 
         # I2S setup
-        self.SAMPLE_RATE = 8000
+        self.SAMPLE_RATE = 16000
         self.BUFFER_SIZE = 4096
         self.MIC_BCK = Pin(21)
         self.MIC_WS = Pin(14)
@@ -20,19 +20,16 @@ class ESP32MicStreamer:
             mode=I2S.RX, bits=16, format=I2S.MONO,
             rate=self.SAMPLE_RATE, ibuf=self.BUFFER_SIZE
         )
-
+        
         self.button = Pin(12, Pin.IN, Pin.PULL_UP)
         self.SERVER_IP = "192.168.1.60"
         self.SERVER_PORT = 8000
 
-        self.robot_mac = b'\xcc\xba\x97\n\xc1\xe8'  # Thay bằng MAC thật
+        self.rb_mac = b'\xcc\xba\x97\n\xc1\xe8'  # Thay bằng MAC thật
 
         self.wlan = network.WLAN(network.STA_IF)
         self.wlan.active(True)
 
-        self.e = espnow.ESPNow()
-        self.e.active(True)
-        self.e.add_peer(self.robot_mac)
 
     def start_ap_mode(self):
         ap = network.WLAN(network.AP_IF)
@@ -143,44 +140,7 @@ class ESP32MicStreamer:
             return False
         except:
             print("⚠️ Không tìm thấy file wifi.json")
-            return False
-
-    def send_config_to_slave(self, max_retries=5):
-        if not self.wlan.isconnected():
-            print("⚠️ Chưa kết nối WiFi, không gửi được")
-            return
-
-        with open(self.CRED_FILE, "r") as f:
-            creds = ujson.loads(f.read())
-
-        msg = ujson.dumps({
-            "ssid": creds["ssid"],
-            "password": creds["password"]
-        })
-        print(f"🔵 Gửi config đến ESP phụ qua ESP-NOW: {msg}")
-
-        for attempt in range(1, max_retries + 1):
-            print(f"📤 Đang gửi lần {attempt}...")
-            try:
-                self.e.send(self.robot_mac, msg.encode())
-            except Exception as ex:
-                print("❌ Lỗi khi gửi:", ex)
-                continue
-
-            start = time.ticks_ms()
-            while time.ticks_diff(time.ticks_ms(), start) < 3000:
-                host, recv = self.e.irecv(True)
-                if recv:
-                    if recv == b"ACK":
-                        print("✅ ESP phụ đã nhận config")
-                        return
-                    else:
-                        print("❓ ESP phụ phản hồi:", recv)
-                        return
-            print("⚠️ Không nhận được phản hồi")
-
-        print("❌ Gửi thất bại sau nhiều lần")
-        
+            return False       
 
     def stream_audio(self):
         print("Bắt đầu stream audio")
@@ -198,7 +158,7 @@ class ESP32MicStreamer:
                     chunk_buffer += buf[:num_bytes]
 
                     # Khi buffer đủ lớn (vd: 16000 bytes ~2s 8kHz 16bit)
-                    if len(chunk_buffer) >= 32000:
+                    if len(chunk_buffer) >= 16000:
                         try:
                             response = urequests.post(url_chunk, data=chunk_buffer, headers=headers)
                             response.close()
@@ -228,12 +188,12 @@ class ESP32MicStreamer:
 
         except KeyboardInterrupt:
             print("🛑 Dừng stream do KeyboardInterrupt")
-
             
-    def run(self):
+        
+            
+    def connect(self):
         if self.CRED_FILE in os.listdir():
             if self.connect_wifi_from_file():
-                #self.send_config_to_slave()
                 self.STATE = "STREAM"
             else:
                 self.STATE = "CONFIG"
@@ -241,14 +201,23 @@ class ESP32MicStreamer:
             self.STATE = "CONFIG"
         if self.STATE == "CONFIG":
             self.start_ap_mode()
-        elif self.STATE == "STREAM":
-           while True:
-                if self.button.value() == 0: # Nút được nhấn (kéo xuống đất)
-                    print("▶️ Nút được nhấn, bắt đầu stream.")
-                    self.stream_audio()
-                    time.sleep(1) # Chờ một chút sau khi dừng stream để tránh nhấn nhả liên tục
+            
+    def disconnect(self):
+        wlan = network.WLAN(network.STA_IF)
+        if wlan.active():
+            if wlan.isconnected():
+                print("Đang ngắt kết nối WiFi...")
+                wlan.disconnect()
+            wlan.active(False)
+            print("WiFi đã bị tắt.")
+        else:
+            print("WiFi đã không hoạt động.")
 
-
-# === CHẠY ===
+            
+    def run(self):
+        if self.STATE == "STREAM":
+            if self.button.value() == 0: # Nút được nhấn (kéo xuống đất)
+                print("▶️ Nút được nhấn, bắt đầu stream.")
+                self.stream_audio()
+                    
 app = ESP32MicStreamer()
-app.run()
